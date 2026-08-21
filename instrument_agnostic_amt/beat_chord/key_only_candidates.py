@@ -390,6 +390,7 @@ class StemTranscriptionRunner:
         force: bool,
         cleanup_stems: bool,
         compile_model: bool = False,
+        compile_velocity: bool = False,
         compile_mode: str = "default",
     ) -> None:
         self.device = resolve_device(device)
@@ -405,10 +406,11 @@ class StemTranscriptionRunner:
         self.force = bool(force)
         self.cleanup_stems = bool(cleanup_stems)
         self.compile_model = bool(compile_model)
+        self.compile_velocity = bool(compile_velocity)
         self.compile_mode = str(compile_mode)
         self._separation_bundle: tuple[Any, Any, torch.dtype] | None = None
         self._amt_bundles: dict[str, tuple[Any, Any, Any, Any]] = {}
-        self._velocity_bundle: tuple[Any, Any] | None = None
+        self._velocity_bundle: tuple[Any, Any, Any] | None = None
 
     def _get_separation_bundle(self) -> tuple[Any, Any, torch.dtype]:
         if self._separation_bundle is not None:
@@ -470,7 +472,7 @@ class StemTranscriptionRunner:
         self._amt_bundles[model_type] = (model, forward_model, config, settings)
         return self._amt_bundles[model_type]
 
-    def _get_velocity_bundle(self) -> tuple[Any, Any]:
+    def _get_velocity_bundle(self) -> tuple[Any, Any, Any]:
         if self._velocity_bundle is not None:
             self._velocity_bundle[0].to(self.device)
             self._velocity_bundle[0].eval()
@@ -480,10 +482,16 @@ class StemTranscriptionRunner:
             )
 
             LOGGER.info("Loading velocity model on %s", self.device)
-            self._velocity_bundle = load_velocity_model(
+            model, config = load_velocity_model(
                 self.velocity_checkpoint,
                 device=self.device,
             )
+            forward_model = maybe_compile_forward(
+                model,
+                enabled=self.compile_velocity,
+                mode=self.compile_mode,
+            )
+            self._velocity_bundle = (model, forward_model, config)
         return self._velocity_bundle
 
     def _separate(
@@ -622,7 +630,7 @@ class StemTranscriptionRunner:
             predict_velocity_for_stem_midis,
         )
 
-        model, config = self._get_velocity_bundle()
+        model, forward_model, config = self._get_velocity_bundle()
         partial_midi = output_midi.with_suffix(".partial.mid")
         partial_midi.unlink(missing_ok=True)
         generated = Path(
@@ -636,7 +644,10 @@ class StemTranscriptionRunner:
                 window_seconds=8.0,
                 max_melodic_instruments=self.max_melodic_instruments,
                 disable_tqdm=True,
+                compile_velocity=self.compile_velocity,
+                compile_mode=self.compile_mode,
                 preloaded_model=model,
+                preloaded_forward=forward_model,
                 preloaded_config=config,
             )
         )
@@ -856,6 +867,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--compile-velocity", action="store_true")
     parser.add_argument(
         "--compile-mode",
         choices=(
@@ -992,6 +1004,7 @@ def run_batch(args: argparse.Namespace) -> list[CandidateResult]:
         force=args.force,
         cleanup_stems=args.cleanup_stems,
         compile_model=args.compile,
+        compile_velocity=args.compile_velocity,
         compile_mode=args.compile_mode,
     )
 
