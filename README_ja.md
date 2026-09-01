@@ -116,23 +116,23 @@ uv sync --locked --extra evaluation  # 評価スクリプト
 uv sync --locked --extra training    # 学習
 ```
 
-`uv sync` は `.venv/` を作成し、現在のcheckoutをeditable installします。`source .venv/bin/activate` で有効化するか、コマンドの前に `uv run` を付けてください。
+`uv sync` は `.venv/` を作成し、このリポジトリを編集可能な状態で仮想環境へインストールします。`source .venv/bin/activate` で環境を有効にするか、`uv run` を付けてコマンドを実行してください。
 
-### 別プロジェクトの依存関係としてインストール
+### 別のPythonプロジェクトから使う
 
-tsumugi は PyPI には公開していません。利用側プロジェクトのディレクトリで、ローカルcheckoutまたは固定したGit commitのいずれかを追加します。
+tsumugiはPyPIには公開していません。開発中はローカルに複製したリポジトリを追加し、別のプロジェクトから継続して利用する場合はGitのコミットを指定してください。
 
 ```bash
 # ローカル開発
 uv add --editable /absolute/path/to/tsumugi
 
-# 再現可能なGit依存
+# 利用する版をコミットで固定
 uv add "instrument-agnostic-amt @ git+https://github.com/anime-song/tsumugi.git@<commit-sha>"
 ```
 
-配布パッケージ名は `instrument-agnostic-amt`、import名は `instrument_agnostic_amt` です。インストールしたpackageから、後述する採譜APIを利用できます。この変更では `tsumugi` コマンドを追加せず、モデルcheckpointも同梱しません。
+配布名は `instrument-agnostic-amt` です。Pythonでは `instrument_agnostic_amt` という名前でインポートします。モデルのチェックポイントはwheelに含まれません。
 
-依存関係の解決とlockは利用側プロジェクトが担当します。このリポジトリの `uv.lock` と `[tool.uv.sources]` の設定は、checkout内で同期するときだけ適用されます。
+依存パッケージのバージョンは、利用側のプロジェクトで解決して固定します。このリポジトリの `uv.lock` と `[tool.uv.sources]` は引き継がれません。PyTorch用のパッケージ取得先が必要な場合は、利用側で設定してください。
 
 `.python-version` は開発時のデフォルトとして Python 3.12 を選択しますが、サポート範囲は 3.10～3.14 のままです。3.12 がない場合、ダウンロードが無効化されているかオフラインでない限り、uv が管理対象の CPython をダウンロードします。
 
@@ -161,9 +161,9 @@ python infer.py --audio input_song.wav
 
 `--checkpoint` を指定しない場合、モデルは Hugging Face からダウンロードされます。
 
-### Python API
+### Pythonから採譜する
 
-`Transcriber` は1つのcheckpointを所有し、ロード済みmodelを呼び出し間で再利用します。CLIと異なり、`from_checkpoint()` は信頼できる既存のローカルcheckpointだけを受け取り、暗黙のdownloadを行いません。
+`Transcriber`を使うと、コマンドを介さずにPythonから採譜できます。チェックポイントを一度読み込むと、その後の呼び出しでも同じモデルを使います。`from_checkpoint()`には、あらかじめ用意した信頼できるローカルのチェックポイントを指定してください。コマンド版と異なり、自動ではダウンロードしません。
 
 ```python
 from pathlib import Path
@@ -181,18 +181,17 @@ result = transcriber.transcribe(
 )
 
 Path("drums.mid").write_bytes(result.midi_bytes)
-print(len(result.notes), result.inference_stats, result.model_info)
 ```
 
-音声には `DecodedAudio(samples, sample_rate)` も渡せます。`samples` はshapeが `[1または2, audio_frames]` の空でないCPU `float32` tensorです。値はnormalized float PCM scale（`1.0`が0 dBFS）とし、raw int16を単にfloatへcastした値は渡さないでください。ライブラリがcheckpointのsample rateへresampleし、monoをstereoへ変換します。Path入力で扱えるのは、インストールされたSoundFile/libsndfileが読める形式です。M4A/AACのdecodeは保証せず、ライブラリを呼ぶ前に利用側で処理してください。
+`transcribe()`には、音声ファイルのパスまたは `DecodedAudio` を渡します。`DecodedAudio` の `samples` には、CPU上にある空でない `float32` テンソルを指定してください。形状は `[チャンネル数, フレーム数]` で、モノラルとステレオに対応します。値には、`1.0`を0 dBFSとする正規化済みのPCMデータを使います。整数PCMを単に `float32` へ変換した値は使えません。
 
-`MidiExportOptions` では、ノートの最短時間、トラック数制限、楽器別CC7、ドラムpitch aliasを制御できます。Python APIは既定ではCC7 eventを追加しません。CLIは後方互換のため、従来のbuilt-in volume mapを明示的に渡します。曖昧なドラムpitchには、既定でrepositoryのcanonical aliasを適用します。
+モノラル音声はライブラリ内でステレオへ変換し、必要に応じてチェックポイントのサンプリング周波数へリサンプリングします。ファイルの読み込みにはSoundFile/libsndfileを使います。M4Aなど、環境によって読み込めない形式は、呼び出す前に変換してください。
 
-`result.notes` は、これらのMIDI export policyを適用する前のdecoder出力です。pitch alias、track remap、overlap truncation、最短note時間の調整を有効にした場合、実際に出力されるMIDIの正本は `result.midi_bytes` として扱ってください。`result.model_info` には、使用したcheckpointと実効runtime設定が入ります。
+戻り値の `TranscriptionResult` には、生成したMIDI、採譜されたノート、処理件数、使用したモデルの情報が入ります。`notes` はMIDI出力時の調整を行う前の結果なので、完成したMIDIとしては `midi_bytes` を使ってください。ノートの最短時間、トラック数の上限、ドラム音の置き換え規則などを変える場合は、`MidiExportOptions`を指定します。
 
-1つの `Transcriber` が同時に受け付ける呼び出しは1件です。同時に呼ぶと、待機せず `TranscriberBusyError` を送出します。scheduler、queue、process lane、readiness、requestのbackpressureは利用アプリ側の責務です。専用のwarmup methodはありません。traffic受付前にcold startのcostを支払う必要がある場合は、本番と同じoptionsと代表的な実入力で `transcribe()` を呼んでください。`torch.compile` はshapeと実行分岐に依存します。
+Python APIは、`instrument_volumes`を指定しない限り、音量を表すCC7イベントを追加しません。既存のコマンド版は、従来どおり内蔵の音量設定を使います。
 
-このAPIはAMTだけを行い、標準的なMIDI bytesを返します。Velocity推定や複数の採譜結果のmergeは自動実行しません。そのため、tsumugiや外部採譜器のMIDIを利用側でmergeしてから、別の後処理を適用できます。
+同じ `Transcriber` を同時に呼び出すことはできません。同時に呼ぶと、処理を待たずに `TranscriberBusyError` を送出します。並列に処理する場合は、処理単位ごとに別の `Transcriber` を用意してください。
 
 ### デバイス選択
 
@@ -247,7 +246,7 @@ python infer_velocity.py \
 
 ステムディレクトリには、`vocals.wav`、`bass.wav`、`drums.wav`、`other.wav` のようにステム名を付けたファイルを置いてください。`--compile-velocity` は、コア AMT の `--compile` とは独立してベロシティバックボーンを regional compile します。学習とデータ準備については [`instrument_agnostic_amt/velocity/README.md`](instrument_agnostic_amt/velocity/README.md) を参照してください。
 
-独立したPython APIには、tsumugi、外部採譜器、利用アプリ側でmergeしたMIDIのいずれでも渡せます。MIDI全体を、明示された1つの論理stemとして扱い、track名からstemを推測しません。
+Python APIを使うと、既存のMIDIに対してベロシティを推定できます。MIDIの作成元は問いません。tsumugiの出力だけでなく、別の採譜ツールで作ったMIDIや、利用側で複数の結果を統合したMIDIも入力できます。
 
 ```python
 from instrument_agnostic_amt import VelocityEstimator, VelocityOptions
@@ -257,22 +256,28 @@ velocity = VelocityEstimator.from_checkpoint(
     device="mps",
 )
 result = velocity.estimate(
-    midi=merged_drums_midi_bytes,
-    audio=decoded_drums_audio,
+    midi=drums_midi_bytes,
+    audio=drums_audio,
     stem_kind="drums",
     options=VelocityOptions(loudness_controls="preserve"),
 )
 ```
 
-`midi` はPathまたはMIDI bytes、`audio` はSoundFileが読めるPathまたは `DecodedAudio` を受け取ります。`stem_kind` は `bass`、`drums`、`guitar`、`other`、`piano`、`vocals`、`unknown` のいずれかです。MIDI内の全noteは、渡したaudioと同じ1つの論理stemに属している必要があり、異なるstem kindを1回の呼び出しへまとめてはいけません。各track固有のprogramとdrum flagは維持し、`stem_kind` は共通のstem class embeddingだけを選びます。このAPIはnoteのmergeやdeduplicateを行いません。
+`midi`にはファイルのパスまたはMIDIのバイト列を渡します。`audio`には、`Transcriber`と同じ形式の音声ファイルまたは `DecodedAudio` を渡せます。MIDI内のすべてのノートが、この音声に対応する1種類のステムに属している必要があります。ステムの種類は `stem_kind` で指定します。指定できる値は `bass`、`drums`、`guitar`、`other`、`piano`、`vocals`、`unknown` です。
 
-`loudness_controls="velocity_only"`（既定）は、全CC7/11をnoteのあるchannel上の127へ置き換えます。`"preserve"` は元のcontrolを維持し、`"strip"` は固定値を追加せず除去します。それ以外のMIDI event、track、absolute tick、Note Off表現は維持します。zero-note MIDIではaudio/model推論を行わず、`velocity_applied=False`として元bytesを返します。
+ステムの種類をトラック名から推測することはありません。また、ノートの統合や重複排除も行いません。これらの方針は利用側で決めてください。各トラックのプログラム番号、ドラムチャンネル、タイミングなどは維持し、発音を開始するNote Onのベロシティと、指定に応じてCC7、CC11だけを変更します。
 
-Velocityの各windowが担当するNote Onの区間は重複しません。音声末尾にpartial windowがある場合、noteの担当区間は変えず、modelへ渡すaudioだけを末尾へ揃えたfull windowにするため、直前の音響contextを使いつつ前のnoteを二重推定しません。音声全体が1 windowより短い場合だけ右側をzero-paddingしてmaskします。読み込んだmodelのCQT最小長を下回る `window_seconds` は、hard-codeした秒数ではなく実際のCQT stageから求めた必要sample数を含む `ValueError` になります。
+| `loudness_controls` | CC7とCC11の扱い |
+| --- | --- |
+| `"velocity_only"` | ノートがあるチャンネルに127を設定します。既定値です。 |
+| `"preserve"` | 元のイベントをそのまま残します。 |
+| `"strip"` | 元のイベントを削除し、新しい値は追加しません。 |
 
-`from_checkpoint()` は明示された信頼済みlocal checkpointを1つだけ読み込み、downloadは行いません。読み込んだmodelと任意のregional compile結果は呼び出し間で再利用します。`result.midi_bytes` が出力の正本、`result.note_count` が処理note数で、`velocity_applied=False` はzero-note bypassを表します。専用warmup関数はなく、cold-start実行が必要ならnote入りMIDIと代表audioで通常の `estimate()` を呼びます。zero-note MIDIはmodelを実行しないためwarmupにはなりません。
+完成したMIDIは `result.midi_bytes` に入ります。処理したノート数は `result.note_count` で確認できます。
 
-`Transcriber`と同様、1つの `VelocityEstimator` が同時に受け付ける呼び出しは1件です。queue、process lane、代表入力によるcold-start実行、MIDI永続化、merge policyは利用アプリ側の責務です。
+ノートを含まないMIDIは、内容を変更せずに返します。この場合は音声を読み込まず、モデルも実行しません。戻り値の `velocity_applied` は `False` になります。
+
+`from_checkpoint()`は、あらかじめ用意した信頼できるローカルのチェックポイントを読み込み、同じモデルを呼び出し間で再利用します。同じ `VelocityEstimator` を同時に呼び出すと、`VelocityEstimatorBusyError` を送出します。
 
 ### 主な引数
 
