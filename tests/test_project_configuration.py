@@ -79,11 +79,24 @@ def test_project_groups_dependencies_by_workflow() -> None:
     }
 
 
+def test_project_configures_hatch_distribution() -> None:
+    configuration = _load_configuration()
+
+    assert configuration["build-system"] == {
+        "requires": ["hatchling"],
+        "build-backend": "hatchling.build",
+    }
+    assert configuration["tool"]["uv"]["package"] is True
+    assert configuration["tool"]["hatch"]["build"]["targets"]["wheel"] == {
+        "packages": ["instrument_agnostic_amt"],
+        "exclude": ["**/.DS_Store"],
+    }
+
+
 def test_uv_uses_cuda_index_on_supported_desktop_platforms() -> None:
     configuration = _load_configuration()
     cuda_platform_marker = "sys_platform == 'linux' or sys_platform == 'win32'"
 
-    assert configuration["tool"]["uv"]["package"] is False
     assert configuration["tool"]["uv"]["sources"] == {
         "torch": [
             {"index": "pytorch-cu130", "marker": cuda_platform_marker}
@@ -249,10 +262,11 @@ def test_colab_helpers_require_the_post_restart_upload_bootstrap() -> None:
     assert "Run the audio upload cell after Colab reconnects" in helper_source
 
 
-def test_pytest_imports_project_modules_from_uv_environment() -> None:
+def test_pytest_does_not_inject_the_repository_into_pythonpath() -> None:
     configuration = _load_configuration()
 
-    assert configuration["tool"]["pytest"]["ini_options"]["pythonpath"] == ["."]
+    pytest_options = configuration["tool"].get("pytest", {}).get("ini_options", {})
+    assert "pythonpath" not in pytest_options
 
 
 def test_colab_exposes_accelerator_and_compile_options() -> None:

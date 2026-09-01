@@ -116,7 +116,23 @@ uv sync --locked --extra evaluation  # 評価スクリプト
 uv sync --locked --extra training    # 学習
 ```
 
-`uv sync` は `.venv/` を作成します。`source .venv/bin/activate` で有効化するか、コマンドの前に `uv run` を付けてください。
+`uv sync` は `.venv/` を作成し、現在のcheckoutをeditable installします。`source .venv/bin/activate` で有効化するか、コマンドの前に `uv run` を付けてください。
+
+### 別プロジェクトの依存関係としてインストール
+
+tsumugi は PyPI には公開していません。利用側プロジェクトのディレクトリで、ローカルcheckoutまたは固定したGit commitのいずれかを追加します。
+
+```bash
+# ローカル開発
+uv add --editable /absolute/path/to/tsumugi
+
+# 再現可能なGit依存
+uv add "instrument-agnostic-amt @ git+https://github.com/anime-song/tsumugi.git@<commit-sha>"
+```
+
+配布パッケージ名は `instrument-agnostic-amt`、import名は `instrument_agnostic_amt` です。現時点でインストールされるモジュールは、まだ安定した公開ライブラリAPIではありません。この変更では `tsumugi` コマンドを追加せず、モデルcheckpointも同梱しません。
+
+依存関係の解決とlockは利用側プロジェクトが担当します。このリポジトリの `uv.lock` と `[tool.uv.sources]` の設定は、checkout内で同期するときだけ適用されます。
 
 `.python-version` は開発時のデフォルトとして Python 3.12 を選択しますが、サポート範囲は 3.10～3.14 のままです。3.12 がない場合、ダウンロードが無効化されているかオフラインでない限り、uv が管理対象の CPython をダウンロードします。
 

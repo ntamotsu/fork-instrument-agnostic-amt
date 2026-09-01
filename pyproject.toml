@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "instrument-agnostic-amt"
 version = "0.1.0"
@@ -41,10 +45,11 @@ dev = [
 ]
 
 [tool.uv]
-package = false
+package = true
 
-[tool.pytest.ini_options]
-pythonpath = ["."]
+[tool.hatch.build.targets.wheel]
+packages = ["instrument_agnostic_amt"]
+exclude = ["**/.DS_Store"]
 
 [tool.uv.sources]
 torch = [
