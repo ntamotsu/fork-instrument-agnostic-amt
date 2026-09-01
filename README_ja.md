@@ -184,7 +184,7 @@ Path("drums.mid").write_bytes(result.midi_bytes)
 print(len(result.notes), result.inference_stats, result.model_info)
 ```
 
-音声には `DecodedAudio(samples, sample_rate)` も渡せます。`samples` はshapeが `[1または2, audio_frames]` の空でないCPU `float32` tensorです。ライブラリがcheckpointのsample rateへresampleし、monoをstereoへ変換します。Path入力で扱えるのは、インストールされたSoundFile/libsndfileが読める形式です。M4A/AACのdecodeは保証せず、ライブラリを呼ぶ前に利用側で処理してください。
+音声には `DecodedAudio(samples, sample_rate)` も渡せます。`samples` はshapeが `[1または2, audio_frames]` の空でないCPU `float32` tensorです。値はnormalized float PCM scale（`1.0`が0 dBFS）とし、raw int16を単にfloatへcastした値は渡さないでください。ライブラリがcheckpointのsample rateへresampleし、monoをstereoへ変換します。Path入力で扱えるのは、インストールされたSoundFile/libsndfileが読める形式です。M4A/AACのdecodeは保証せず、ライブラリを呼ぶ前に利用側で処理してください。
 
 `MidiExportOptions` では、ノートの最短時間、トラック数制限、楽器別CC7、ドラムpitch aliasを制御できます。Python APIは既定ではCC7 eventを追加しません。CLIは後方互換のため、従来のbuilt-in volume mapを明示的に渡します。曖昧なドラムpitchには、既定でrepositoryのcanonical aliasを適用します。
 
@@ -246,6 +246,29 @@ python infer_velocity.py \
 ```
 
 ステムディレクトリには、`vocals.wav`、`bass.wav`、`drums.wav`、`other.wav` のようにステム名を付けたファイルを置いてください。`--compile-velocity` は、コア AMT の `--compile` とは独立してベロシティバックボーンを regional compile します。学習とデータ準備については [`instrument_agnostic_amt/velocity/README.md`](instrument_agnostic_amt/velocity/README.md) を参照してください。
+
+独立したPython APIには、tsumugi、外部採譜器、利用アプリ側でmergeしたMIDIのいずれでも渡せます。MIDI全体を、明示された1つの論理stemとして扱い、track名からstemを推測しません。
+
+```python
+from instrument_agnostic_amt import VelocityEstimator, VelocityOptions
+
+velocity = VelocityEstimator.from_checkpoint(
+    "/models/best_velocity_model.pth",
+    device="mps",
+)
+result = velocity.estimate(
+    midi=merged_drums_midi_bytes,
+    audio=decoded_drums_audio,
+    stem_kind="drums",
+    options=VelocityOptions(loudness_controls="preserve"),
+)
+```
+
+`midi` はPathまたはMIDI bytes、`audio` はSoundFileが読めるPathまたは `DecodedAudio` を受け取ります。`stem_kind` は `bass`、`drums`、`guitar`、`other`、`piano`、`vocals`、`unknown` のいずれかです。各track固有のprogramとdrum flagは維持し、`stem_kind` は共通のstem class embeddingだけを選びます。このAPIはnoteのmergeやdeduplicateを行いません。
+
+`loudness_controls="velocity_only"`（既定）は、全CC7/11をnoteのあるchannel上の127へ置き換えます。`"preserve"` は元のcontrolを維持し、`"strip"` は固定値を追加せず除去します。それ以外のMIDI event、track、absolute tick、Note Off表現は維持します。zero-note MIDIではaudio/model推論を行わず、`velocity_applied=False`として元bytesを返します。
+
+`Transcriber`と同様、1つの `VelocityEstimator` が同時に受け付ける呼び出しは1件です。queue、process lane、代表入力によるcold-start実行、MIDI永続化、merge policyは利用アプリ側の責務です。
 
 ### 主な引数
 

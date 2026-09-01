@@ -143,6 +143,7 @@ from instrument_agnostic_amt.taxonomy import instrument_classes
 package_path = Path(instrument_agnostic_amt.__file__).resolve()
 assert package_path.is_relative_to(installation)
 assert version("instrument-agnostic-amt") == "0.1.0"
+assert instrument_agnostic_amt.VelocityEstimator
 assert instrument_classes.get_instrument_class_id_by_name("drums") >= 0
 taxonomy = files("instrument_agnostic_amt.taxonomy")
 assert taxonomy.joinpath("instrument_merge.json").is_file()

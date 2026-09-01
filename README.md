@@ -183,7 +183,7 @@ Path("drums.mid").write_bytes(result.midi_bytes)
 print(len(result.notes), result.inference_stats, result.model_info)
 ```
 
-The audio argument can also be `DecodedAudio(samples, sample_rate)`, where `samples` is a non-empty CPU `float32` tensor with shape `[1 or 2, audio_frames]`. The library resamples it to the checkpoint rate and converts mono to stereo. Path input supports formats readable by the installed SoundFile/libsndfile; M4A/AAC decoding is not guaranteed and should be handled before calling the library.
+The audio argument can also be `DecodedAudio(samples, sample_rate)`, where `samples` is a non-empty CPU `float32` tensor with shape `[1 or 2, audio_frames]`. Samples use normalized float PCM scale (`1.0` is 0 dBFS); do not pass raw int16 values merely cast to float. The library resamples it to the checkpoint rate and converts mono to stereo. Path input supports formats readable by the installed SoundFile/libsndfile; M4A/AAC decoding is not guaranteed and should be handled before calling the library.
 
 `MidiExportOptions` controls minimum note length, track limiting, instrument CC7 values, and drum-pitch aliases. The Python API adds no CC7 events by default, while the CLI explicitly preserves its existing built-in volume map. Ambiguous drum pitches use the repository's canonical aliases by default.
 
@@ -244,6 +244,29 @@ python infer_velocity.py \
 ```
 
 Name files in the stem directory after their stems, such as `vocals.wav`, `bass.wav`, `drums.wav`, and `other.wav`. `--compile-velocity` regionally compiles the velocity backbone independently of the core AMT `--compile`. See [`instrument_agnostic_amt/velocity/README.md`](instrument_agnostic_amt/velocity/README.md) for training and data preparation.
+
+The independent Python API accepts MIDI from tsumugi, another transcriber, or an application-side merge. It treats the complete MIDI as one explicitly named logical stem and never infers the stem from track names.
+
+```python
+from instrument_agnostic_amt import VelocityEstimator, VelocityOptions
+
+velocity = VelocityEstimator.from_checkpoint(
+    "/models/best_velocity_model.pth",
+    device="mps",
+)
+result = velocity.estimate(
+    midi=merged_drums_midi_bytes,
+    audio=decoded_drums_audio,
+    stem_kind="drums",
+    options=VelocityOptions(loudness_controls="preserve"),
+)
+```
+
+`midi` accepts a Path or MIDI bytes, and `audio` accepts a SoundFile-readable Path or `DecodedAudio`. `stem_kind` is one of `bass`, `drums`, `guitar`, `other`, `piano`, `vocals`, or `unknown`. All tracks retain their own program and drum flag; `stem_kind` only selects the shared stem-class embedding. The API does not merge or deduplicate notes.
+
+`loudness_controls="velocity_only"` (the default) replaces all CC7/11 with 127 on note-bearing channels. `"preserve"` leaves them unchanged, and `"strip"` removes them without adding replacements. Other MIDI events, tracks, absolute ticks, and Note Off representations are preserved. A zero-note MIDI bypasses audio/model inference and returns the original bytes with `velocity_applied=False`.
+
+As with `Transcriber`, one `VelocityEstimator` accepts one call at a time. Queueing, process lanes, representative cold-start calls, MIDI persistence, and merge policy belong to the application.
 
 ### Key arguments
 
