@@ -65,6 +65,7 @@ tsumugi works best on clean, sustained material where each stem is monophonic. A
 
 | Date | Update |
 | --- | --- |
+| 2026-09-02 | 🐍 Made tsumugi installable as a dependency of other Python projects. Added `Transcriber` and `VelocityEstimator`, which reuse the loaded model across calls. Fixed velocity estimation failing on a short segment at the end of the audio. |
 | 2026-09-01 | 🥁 Added Drum model v1.5 (`--type drums_v1_5`) and made it the Colab default for drum stems. On the real-audio evaluation set (50 ms tolerance, audio-aligned, canonical drum pitches: 40→38 and 57→49), exact F1 improved from 0.6157 to 0.6890 for Drum Kit (+7.3 points) and from 0.1879 to 0.4044 for All Percussions (+21.7 points). |
 | 2026-08-25 | 🎤 Added Vocal Harmony model v1.5 (`--type vocal_harmony_v1_5`) and made it the Colab default for `vocals` stems. COnP improved from 0.6052 to 0.6814 on the held-out MIR-ST500 split. |
 | 2026-08-20 | ⚡ Migrated to uv and PyTorch 2.13. Added MPS inference and AMP/regional compile controls; reduced device synchronization, temporary copies, and repeated stem loading. Two changes intentionally affect output: CUDA attention no longer downcasts implicitly (FP32 is now the default), and V1 window batching propagates decode state in window order. |

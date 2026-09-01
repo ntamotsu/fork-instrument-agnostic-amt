@@ -65,6 +65,7 @@ uv run python infer.py --audio input_song.wav
 
 | 日付 | 更新内容 |
 | --- | --- |
+| 2026-09-02 | 🐍 別の Python プロジェクトへ依存パッケージとしてインストールできるように変更。読み込んだモデルを再利用できる `Transcriber` と `VelocityEstimator` を追加。ベロシティ推定が音声末尾の短い区間で失敗する問題を修正。 |
 | 2026-09-01 | 🥁 Drum model v1.5（`--type drums_v1_5`）を追加し、Colab のドラムステムのデフォルトに設定。実音源評価セットで exact F1 は Drum Kit が 0.6157→0.6890（+7.3ポイント）、All Percussions が 0.1879→0.4044（+21.7ポイント）に向上。 |
 | 2026-08-25 | 🎤 Vocal harmony model v1.5（`--type vocal_harmony_v1_5`）を追加し、Colab の `vocals` ステムのデフォルトに設定。MIR-ST500 のホールドアウト分割で COnP が 0.6052 から 0.6814 に向上。 |
 | 2026-08-20 | ⚡ uv と PyTorch 2.13 へ移行。MPS 推論、AMP、regional compile の制御を追加し、デバイス同期、一時コピー、ステムの重複読み込みを削減。意図的に出力が変わる変更が 2 点あり、CUDA で attention を暗黙に低精度化しないように変更（FP32 がデフォルト）し、V1 のウィンドウバッチでデコード状態をウィンドウ順に伝播するように変更。 |
