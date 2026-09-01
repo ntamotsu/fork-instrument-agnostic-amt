@@ -129,7 +129,7 @@ uv add --editable /absolute/path/to/tsumugi
 uv add "instrument-agnostic-amt @ git+https://github.com/anime-song/tsumugi.git@<commit-sha>"
 ```
 
-The distribution name is `instrument-agnostic-amt`, while the import package is `instrument_agnostic_amt`. At this stage, the installed modules are not yet a stable public library API. This does not add a `tsumugi` command or bundle model checkpoints.
+The distribution name is `instrument-agnostic-amt`, while the import package is `instrument_agnostic_amt`. The installed package exposes the transcription API described below. This does not add a `tsumugi` command or bundle model checkpoints.
 
 The consuming project resolves and locks dependencies. This repository's `uv.lock` and `[tool.uv.sources]` settings apply only when syncing this checkout.
 
@@ -159,6 +159,39 @@ python infer.py --audio input_song.wav
 ```
 
 If `--checkpoint` is omitted, the model is downloaded from Hugging Face.
+
+### Python API
+
+`Transcriber` owns one checkpoint and reuses the loaded model across calls. Unlike the CLI, `from_checkpoint()` accepts an existing trusted local checkpoint and never downloads one implicitly.
+
+```python
+from pathlib import Path
+
+from instrument_agnostic_amt import Transcriber, TranscriptionOptions
+
+transcriber = Transcriber.from_checkpoint(
+    "/models/best_model_drums_v1_5.pth",
+    device="mps",
+    compile=True,
+)
+result = transcriber.transcribe(
+    "drums.wav",
+    options=TranscriptionOptions(allowed_instruments=("drums",)),
+)
+
+Path("drums.mid").write_bytes(result.midi_bytes)
+print(len(result.notes), result.inference_stats, result.model_info)
+```
+
+The audio argument can also be `DecodedAudio(samples, sample_rate)`, where `samples` is a non-empty CPU `float32` tensor with shape `[1 or 2, audio_frames]`. The library resamples it to the checkpoint rate and converts mono to stereo. Path input supports formats readable by the installed SoundFile/libsndfile; M4A/AAC decoding is not guaranteed and should be handled before calling the library.
+
+`MidiExportOptions` controls minimum note length, track limiting, instrument CC7 values, and drum-pitch aliases. The Python API adds no CC7 events by default, while the CLI explicitly preserves its existing built-in volume map. Ambiguous drum pitches use the repository's canonical aliases by default.
+
+`result.notes` is the decoder output before those MIDI export policies run. Treat `result.midi_bytes` as the authoritative emitted MIDI when aliases, track remapping, overlap truncation, or minimum-duration adjustment is enabled. `result.model_info` records the checkpoint and effective runtime configuration used for the call.
+
+One `Transcriber` accepts one call at a time and raises `TranscriberBusyError` immediately on a concurrent call. Scheduling, queues, process lanes, readiness, and request backpressure belong to the application. There is no dedicated warmup method: if cold-start latency must be paid before serving traffic, call `transcribe()` with a representative real input and the production options. `torch.compile` remains shape- and branch-dependent.
+
+This API performs AMT and returns ordinary MIDI bytes; it does not automatically run Velocity prediction or merge multiple transcription results. Applications can therefore merge tsumugi or third-party MIDI first and apply later post-processing separately.
 
 ### Device selection
 

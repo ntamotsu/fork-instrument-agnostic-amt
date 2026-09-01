@@ -204,7 +204,7 @@ def test_batch_runner_routes_amp_to_core_amt_inference(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import infer as amt_infer
+    amt_infer = candidates.amt_infer
 
     inference_calls: list[dict[str, object]] = []
 
@@ -287,6 +287,57 @@ def test_batch_runner_routes_amp_to_core_amt_inference(
     assert inference_calls[0]["amp_dtype"] is torch.bfloat16
 
 
+def test_batch_runner_does_not_import_the_checkout_root_infer_module(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "infer":
+            raise AssertionError("packaged runtime must not import root infer.py")
+        return original_import(name, *args, **kwargs)
+
+    model = SimpleNamespace(to=lambda _device: None, eval=lambda: None)
+    packaged_helpers = SimpleNamespace(
+        MODEL_CHECKPOINT_FILENAMES={"default": "best_model.pth"},
+        _ensure_checkpoint=lambda path, **_kwargs: path,
+        _load_model_and_settings=lambda *_args, **_kwargs: (
+            model,
+            SimpleNamespace(),
+            SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(candidates, "amt_infer", packaged_helpers, raising=False)
+    monkeypatch.setattr(
+        candidates,
+        "maybe_compile_forward",
+        lambda loaded_model, **_kwargs: loaded_model,
+    )
+    runner = StemTranscriptionRunner(
+        device="cpu",
+        amt_checkpoint_dir=tmp_path,
+        separation_checkpoint=tmp_path / "separation.pth",
+        velocity_checkpoint=tmp_path / "velocity.pth",
+        window_batch_size=1,
+        max_melodic_instruments=15,
+        merge_onset_ms=50.0,
+        transcribe_drums=True,
+        predict_velocity=False,
+        strict_velocity=True,
+        force=False,
+        cleanup_stems=False,
+    )
+
+    loaded_model, forward_model, _, _ = runner._get_amt_bundle("default")
+
+    assert loaded_model is model
+    assert forward_model is model
+
+
 def test_batch_cli_exposes_core_amt_compile_options() -> None:
     defaults = parse_arguments([])
     enabled = parse_arguments(["--compile", "--compile-mode", "max-autotune"])
@@ -317,7 +368,7 @@ def test_batch_runner_routes_compiled_forward_to_core_amt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import infer as amt_infer
+    amt_infer = candidates.amt_infer
 
     eager_model = object()
     compiled_forward = object()

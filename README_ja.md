@@ -130,7 +130,7 @@ uv add --editable /absolute/path/to/tsumugi
 uv add "instrument-agnostic-amt @ git+https://github.com/anime-song/tsumugi.git@<commit-sha>"
 ```
 
-配布パッケージ名は `instrument-agnostic-amt`、import名は `instrument_agnostic_amt` です。現時点でインストールされるモジュールは、まだ安定した公開ライブラリAPIではありません。この変更では `tsumugi` コマンドを追加せず、モデルcheckpointも同梱しません。
+配布パッケージ名は `instrument-agnostic-amt`、import名は `instrument_agnostic_amt` です。インストールしたpackageから、後述する採譜APIを利用できます。この変更では `tsumugi` コマンドを追加せず、モデルcheckpointも同梱しません。
 
 依存関係の解決とlockは利用側プロジェクトが担当します。このリポジトリの `uv.lock` と `[tool.uv.sources]` の設定は、checkout内で同期するときだけ適用されます。
 
@@ -160,6 +160,39 @@ python infer.py --audio input_song.wav
 ```
 
 `--checkpoint` を指定しない場合、モデルは Hugging Face からダウンロードされます。
+
+### Python API
+
+`Transcriber` は1つのcheckpointを所有し、ロード済みmodelを呼び出し間で再利用します。CLIと異なり、`from_checkpoint()` は信頼できる既存のローカルcheckpointだけを受け取り、暗黙のdownloadを行いません。
+
+```python
+from pathlib import Path
+
+from instrument_agnostic_amt import Transcriber, TranscriptionOptions
+
+transcriber = Transcriber.from_checkpoint(
+    "/models/best_model_drums_v1_5.pth",
+    device="mps",
+    compile=True,
+)
+result = transcriber.transcribe(
+    "drums.wav",
+    options=TranscriptionOptions(allowed_instruments=("drums",)),
+)
+
+Path("drums.mid").write_bytes(result.midi_bytes)
+print(len(result.notes), result.inference_stats, result.model_info)
+```
+
+音声には `DecodedAudio(samples, sample_rate)` も渡せます。`samples` はshapeが `[1または2, audio_frames]` の空でないCPU `float32` tensorです。ライブラリがcheckpointのsample rateへresampleし、monoをstereoへ変換します。Path入力で扱えるのは、インストールされたSoundFile/libsndfileが読める形式です。M4A/AACのdecodeは保証せず、ライブラリを呼ぶ前に利用側で処理してください。
+
+`MidiExportOptions` では、ノートの最短時間、トラック数制限、楽器別CC7、ドラムpitch aliasを制御できます。Python APIは既定ではCC7 eventを追加しません。CLIは後方互換のため、従来のbuilt-in volume mapを明示的に渡します。曖昧なドラムpitchには、既定でrepositoryのcanonical aliasを適用します。
+
+`result.notes` は、これらのMIDI export policyを適用する前のdecoder出力です。pitch alias、track remap、overlap truncation、最短note時間の調整を有効にした場合、実際に出力されるMIDIの正本は `result.midi_bytes` として扱ってください。`result.model_info` には、使用したcheckpointと実効runtime設定が入ります。
+
+1つの `Transcriber` が同時に受け付ける呼び出しは1件です。同時に呼ぶと、待機せず `TranscriberBusyError` を送出します。scheduler、queue、process lane、readiness、requestのbackpressureは利用アプリ側の責務です。専用のwarmup methodはありません。traffic受付前にcold startのcostを支払う必要がある場合は、本番と同じoptionsと代表的な実入力で `transcribe()` を呼んでください。`torch.compile` はshapeと実行分岐に依存します。
+
+このAPIはAMTだけを行い、標準的なMIDI bytesを返します。Velocity推定や複数の採譜結果のmergeは自動実行しません。そのため、tsumugiや外部採譜器のMIDIを利用側でmergeしてから、別の後処理を適用できます。
 
 ### デバイス選択
 

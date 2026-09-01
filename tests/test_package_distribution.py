@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -51,6 +50,7 @@ def test_wheel_contains_runtime_package_data_without_repository_files(
         members = set(wheel.namelist())
 
     assert "instrument_agnostic_amt/__init__.py" in members
+    assert "instrument_agnostic_amt/py.typed" in members
     assert "instrument_agnostic_amt/taxonomy/instrument_merge.json" in members
     assert "instrument_agnostic_amt/taxonomy/gm_instrument_classes.json" in members
     assert not any(member.startswith("tests/") for member in members)
@@ -136,6 +136,8 @@ from pathlib import Path
 installation = Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(installation))
 import instrument_agnostic_amt
+from instrument_agnostic_amt.beat_chord import key_only_candidates
+from instrument_agnostic_amt.inference import compat
 from instrument_agnostic_amt.taxonomy import instrument_classes
 
 package_path = Path(instrument_agnostic_amt.__file__).resolve()
@@ -145,6 +147,7 @@ assert instrument_classes.get_instrument_class_id_by_name("drums") >= 0
 taxonomy = files("instrument_agnostic_amt.taxonomy")
 assert taxonomy.joinpath("instrument_merge.json").is_file()
 assert taxonomy.joinpath("gm_instrument_classes.json").is_file()
+assert key_only_candidates.amt_infer is compat
 """,
         installed_package=installed_package,
         tmp_path=tmp_path,
