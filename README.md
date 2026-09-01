@@ -58,6 +58,7 @@ tsumugi works best on clean, sustained material where each stem is monophonic. A
 - 🎚️ **Per-note velocity** — a dedicated post-processing model estimates dynamics from separated stems
 - 🎯 **Beat, chord, and key** — optional MIDI-frame models, disabled by default
 - 🧪 **[Experimental] Instrument classification** — a 36-class head for per-instrument MIDI tracks
+- 🐍 **Python API** — `Transcriber` and `VelocityEstimator` load a checkpoint once and work on files or in-memory audio and MIDI from your own code
 
 <details>
 <summary><b>Changelog</b></summary>
@@ -115,23 +116,7 @@ uv sync --locked --extra evaluation  # evaluation scripts
 uv sync --locked --extra training    # training
 ```
 
-`uv sync` creates `.venv/` and installs the current checkout in editable mode. Activate it with `source .venv/bin/activate`, or prefix commands with `uv run`.
-
-### Installing as a dependency
-
-tsumugi is not published on PyPI. From the consuming project's directory, add either a local checkout or an immutable Git commit:
-
-```bash
-# Local development
-uv add --editable /absolute/path/to/tsumugi
-
-# Reproducible Git dependency
-uv add "instrument-agnostic-amt @ git+https://github.com/anime-song/tsumugi.git@<commit-sha>"
-```
-
-The distribution name is `instrument-agnostic-amt`, while the import package is `instrument_agnostic_amt`. The installed package exposes the transcription API described below. This does not add a `tsumugi` command or bundle model checkpoints.
-
-The consuming project resolves and locks dependencies. This repository's `uv.lock` and `[tool.uv.sources]` settings apply only when syncing this checkout.
+`uv sync` creates `.venv/` and installs the checkout into it as an editable package. Activate it with `source .venv/bin/activate`, or prefix commands with `uv run`.
 
 `.python-version` selects Python 3.12 as the development default without narrowing the supported 3.10–3.14 range. If 3.12 is not installed, uv downloads a managed CPython unless downloads are disabled or the machine is offline.
 
@@ -150,6 +135,20 @@ MPS-specific tests are skipped when MPS is unavailable. The compile regression t
 RUN_ACCELERATOR_COMPILE_TEST=1 uv run pytest tests/test_mps_inference.py
 ```
 
+### Installing into another project
+
+tsumugi is not published on PyPI. Add it to another project from a local checkout or from a pinned Git commit. The distribution name is `instrument-agnostic-amt`; the import name is `instrument_agnostic_amt`.
+
+```bash
+# Editable install from a local checkout
+uv add --editable /path/to/tsumugi
+
+# Pinned Git dependency
+uv add git+https://github.com/anime-song/tsumugi.git --rev <commit>
+```
+
+The package contains the `instrument_agnostic_amt` modules and their bundled data (the instrument taxonomy JSON files). Repository-level scripts such as `infer.py`, the notebook, the tests, and model checkpoints are not included; the packaged CLI is available as `python -m instrument_agnostic_amt.cli.infer`. The consuming project resolves its own dependencies: this repository's `uv.lock` and its `[tool.uv.sources]` entry for the PyTorch CUDA 13.0 index apply only when syncing this checkout.
+
 ---
 
 ## Inference
@@ -162,36 +161,24 @@ If `--checkpoint` is omitted, the model is downloaded from Hugging Face.
 
 ### Python API
 
-`Transcriber` owns one checkpoint and reuses the loaded model across calls. Unlike the CLI, `from_checkpoint()` accepts an existing trusted local checkpoint and never downloads one implicitly.
+`Transcriber` runs the same inference from Python. One instance loads one checkpoint and reuses the model across calls. `from_checkpoint()` takes an existing, trusted local checkpoint and never downloads one; run the CLI once or fetch the file from Hugging Face yourself.
 
 ```python
 from pathlib import Path
 
 from instrument_agnostic_amt import Transcriber, TranscriptionOptions
 
-transcriber = Transcriber.from_checkpoint(
-    "/models/best_model_drums_v1_5.pth",
-    device="mps",
-    compile=True,
-)
+transcriber = Transcriber.from_checkpoint("checkpoints/best_model.pth")
 result = transcriber.transcribe(
-    "drums.wav",
-    options=TranscriptionOptions(allowed_instruments=("drums",)),
+    "input_song.wav",
+    options=TranscriptionOptions(allowed_instruments=("piano", "acoustic_guitar")),
 )
-
-Path("drums.mid").write_bytes(result.midi_bytes)
-print(len(result.notes), result.inference_stats, result.model_info)
+Path("input_song.mid").write_bytes(result.midi_bytes)
 ```
 
-The audio argument can also be `DecodedAudio(samples, sample_rate)`, where `samples` is a non-empty CPU `float32` tensor with shape `[1 or 2, audio_frames]`. Samples use normalized float PCM scale (`1.0` is 0 dBFS); do not pass raw int16 values merely cast to float. The library resamples it to the checkpoint rate and converts mono to stereo. Path input supports formats readable by the installed SoundFile/libsndfile; M4A/AAC decoding is not guaranteed and should be handled before calling the library.
+`from_checkpoint()` also accepts `device`, `amp`, `amp_dtype`, `compile`, and `compile_mode`, and `TranscriptionOptions` / `MidiExportOptions` cover the decoding and MIDI export arguments listed under [Key arguments](#key-arguments). Two defaults differ from the CLI: no CC7 volume events are written unless `instrument_volumes` is given, and no progress bar is shown unless `show_progress=True`.
 
-`MidiExportOptions` controls minimum note length, track limiting, instrument CC7 values, and drum-pitch aliases. The Python API adds no CC7 events by default, while the CLI explicitly preserves its existing built-in volume map. Ambiguous drum pitches use the repository's canonical aliases by default.
-
-`result.notes` is the decoder output before those MIDI export policies run. Treat `result.midi_bytes` as the authoritative emitted MIDI when aliases, track remapping, overlap truncation, or minimum-duration adjustment is enabled. `result.model_info` records the checkpoint and effective runtime configuration used for the call.
-
-One `Transcriber` accepts one call at a time and raises `TranscriberBusyError` immediately on a concurrent call. Scheduling, queues, process lanes, readiness, and request backpressure belong to the application. There is no dedicated warmup method: if cold-start latency must be paid before serving traffic, call `transcribe()` with a representative real input and the production options. `torch.compile` remains shape- and branch-dependent.
-
-This API performs AMT and returns ordinary MIDI bytes; it does not automatically run Velocity prediction or merge multiple transcription results. Applications can therefore merge tsumugi or third-party MIDI first and apply later post-processing separately.
+`transcribe()` accepts a path to any file SoundFile can read, or a `DecodedAudio(samples, sample_rate)` for audio you decoded yourself (for example M4A, which libsndfile cannot open): a CPU `float32` tensor shaped `[channels, frames]` with one or two channels and values in the ±1.0 range. Mono is duplicated to stereo and any sample rate is resampled. `result.midi_bytes` is the authoritative output; `result.notes` is the decoder output before MIDI export applies drum pitch aliases, track limiting, and the minimum note length. One instance handles one call at a time and raises `TranscriberBusyError` immediately on a concurrent call.
 
 ### Device selection
 
@@ -245,32 +232,24 @@ python infer_velocity.py \
 
 Name files in the stem directory after their stems, such as `vocals.wav`, `bass.wav`, `drums.wav`, and `other.wav`. `--compile-velocity` regionally compiles the velocity backbone independently of the core AMT `--compile`. See [`instrument_agnostic_amt/velocity/README.md`](instrument_agnostic_amt/velocity/README.md) for training and data preparation.
 
-The independent Python API accepts MIDI from tsumugi, another transcriber, or an application-side merge. It treats the complete MIDI as one explicitly named logical stem and never infers the stem from track names.
+`VelocityEstimator` runs the same model from Python on one logical stem per call: a MIDI whose notes all belong to that stem, plus the stem's audio. The MIDI may come from tsumugi, from another transcriber, or from a merge done by your application; the estimator never guesses the stem from track names and never merges or drops notes.
 
 ```python
+from pathlib import Path
+
 from instrument_agnostic_amt import VelocityEstimator, VelocityOptions
 
-velocity = VelocityEstimator.from_checkpoint(
-    "/models/best_velocity_model.pth",
-    device="mps",
-)
-result = velocity.estimate(
-    midi=merged_drums_midi_bytes,
-    audio=decoded_drums_audio,
-    stem_kind="drums",
+estimator = VelocityEstimator.from_checkpoint("checkpoints/best_velocity_model.pth")
+result = estimator.estimate(
+    midi="stem_midis/song_bass.mid",    # path or MIDI bytes
+    audio="separated_stems/bass.wav",   # path or DecodedAudio
+    stem_kind="bass",
     options=VelocityOptions(loudness_controls="preserve"),
 )
+Path("song_bass_velocity.mid").write_bytes(result.midi_bytes)
 ```
 
-`midi` accepts a Path or MIDI bytes, and `audio` accepts a SoundFile-readable Path or `DecodedAudio`. `stem_kind` is one of `bass`, `drums`, `guitar`, `other`, `piano`, `vocals`, or `unknown`. Every note in the MIDI must belong to the same logical stem as the supplied audio; do not combine different stem kinds into one call. All tracks retain their own program and drum flag, while `stem_kind` only selects the shared stem-class embedding. The API does not merge or deduplicate notes.
-
-`loudness_controls="velocity_only"` (the default) replaces all CC7/11 with 127 on note-bearing channels. `"preserve"` leaves them unchanged, and `"strip"` removes them without adding replacements. Other MIDI events, tracks, absolute ticks, and Note Off representations are preserved. A zero-note MIDI bypasses audio/model inference and returns the original bytes with `velocity_applied=False`.
-
-Velocity windows use non-overlapping Note On ownership. When the audio ends with a partial window, the final notes keep their original ownership interval while the model receives one full window aligned to the end of the audio, preserving preceding acoustic context without predicting earlier notes twice. Audio shorter than one window is right-zero-padded and masked. A `window_seconds` value below the loaded model's CQT minimum raises a descriptive `ValueError`; the minimum is derived from that model's CQT stages rather than hard-coded.
-
-`from_checkpoint()` loads one explicitly supplied, trusted local checkpoint and never downloads it. The loaded model and optional regional compilation are reused across calls. `result.midi_bytes` is the authoritative output, `result.note_count` is the number of notes processed, and `velocity_applied=False` identifies the zero-note bypass. There is no dedicated warmup method: call `estimate()` with representative audio and a note-bearing MIDI if a cold-start run is needed. A zero-note MIDI does not execute the model and therefore does not warm it up.
-
-As with `Transcriber`, one `VelocityEstimator` accepts one call at a time. Queueing, process lanes, representative cold-start calls, MIDI persistence, and merge policy belong to the application.
+`stem_kind` is one of `bass`, `drums`, `guitar`, `other`, `piano`, `vocals`, or `unknown`. Only Note On velocities change in the output; every other event, track, and tick is preserved. `loudness_controls` handles CC7/CC11: `velocity_only` (the default, as in the CLI) sets them to 127 on note-bearing channels, `preserve` keeps them, and `strip` removes them. A MIDI without notes is returned unchanged with `velocity_applied=False`. Notes are predicted once each in windows of `window_seconds` (default 8 s); a trailing partial window is evaluated on the last full window of audio. A note that starts after the audio ends, or a `window_seconds` shorter than the model's CQT can process, raises `ValueError`. Like `Transcriber`, `from_checkpoint()` takes an existing, trusted local checkpoint and never downloads, and one instance handles one call at a time (`VelocityEstimatorBusyError`).
 
 ### Key arguments
 
