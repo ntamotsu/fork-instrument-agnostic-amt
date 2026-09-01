@@ -172,7 +172,7 @@ from instrument_agnostic_amt import Transcriber, TranscriptionOptions
 transcriber = Transcriber.from_checkpoint("checkpoints/best_model.pth")
 result = transcriber.transcribe(
     "input_song.wav",
-    options=TranscriptionOptions(allowed_instruments=("piano", "acoustic_guitar")),
+    options=TranscriptionOptions(allowed_instruments=("piano", "electric_piano", "plucked_keyboard")),
 )
 Path("input_song.mid").write_bytes(result.midi_bytes)
 ```
