@@ -264,9 +264,13 @@ result = velocity.estimate(
 )
 ```
 
-`midi` はPathまたはMIDI bytes、`audio` はSoundFileが読めるPathまたは `DecodedAudio` を受け取ります。`stem_kind` は `bass`、`drums`、`guitar`、`other`、`piano`、`vocals`、`unknown` のいずれかです。各track固有のprogramとdrum flagは維持し、`stem_kind` は共通のstem class embeddingだけを選びます。このAPIはnoteのmergeやdeduplicateを行いません。
+`midi` はPathまたはMIDI bytes、`audio` はSoundFileが読めるPathまたは `DecodedAudio` を受け取ります。`stem_kind` は `bass`、`drums`、`guitar`、`other`、`piano`、`vocals`、`unknown` のいずれかです。MIDI内の全noteは、渡したaudioと同じ1つの論理stemに属している必要があり、異なるstem kindを1回の呼び出しへまとめてはいけません。各track固有のprogramとdrum flagは維持し、`stem_kind` は共通のstem class embeddingだけを選びます。このAPIはnoteのmergeやdeduplicateを行いません。
 
 `loudness_controls="velocity_only"`（既定）は、全CC7/11をnoteのあるchannel上の127へ置き換えます。`"preserve"` は元のcontrolを維持し、`"strip"` は固定値を追加せず除去します。それ以外のMIDI event、track、absolute tick、Note Off表現は維持します。zero-note MIDIではaudio/model推論を行わず、`velocity_applied=False`として元bytesを返します。
+
+Velocityの各windowが担当するNote Onの区間は重複しません。音声末尾にpartial windowがある場合、noteの担当区間は変えず、modelへ渡すaudioだけを末尾へ揃えたfull windowにするため、直前の音響contextを使いつつ前のnoteを二重推定しません。音声全体が1 windowより短い場合だけ右側をzero-paddingしてmaskします。読み込んだmodelのCQT最小長を下回る `window_seconds` は、hard-codeした秒数ではなく実際のCQT stageから求めた必要sample数を含む `ValueError` になります。
+
+`from_checkpoint()` は明示された信頼済みlocal checkpointを1つだけ読み込み、downloadは行いません。読み込んだmodelと任意のregional compile結果は呼び出し間で再利用します。`result.midi_bytes` が出力の正本、`result.note_count` が処理note数で、`velocity_applied=False` はzero-note bypassを表します。専用warmup関数はなく、cold-start実行が必要ならnote入りMIDIと代表audioで通常の `estimate()` を呼びます。zero-note MIDIはmodelを実行しないためwarmupにはなりません。
 
 `Transcriber`と同様、1つの `VelocityEstimator` が同時に受け付ける呼び出しは1件です。queue、process lane、代表入力によるcold-start実行、MIDI永続化、merge policyは利用アプリ側の責務です。
 

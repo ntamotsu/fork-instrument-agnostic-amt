@@ -262,9 +262,13 @@ result = velocity.estimate(
 )
 ```
 
-`midi` accepts a Path or MIDI bytes, and `audio` accepts a SoundFile-readable Path or `DecodedAudio`. `stem_kind` is one of `bass`, `drums`, `guitar`, `other`, `piano`, `vocals`, or `unknown`. All tracks retain their own program and drum flag; `stem_kind` only selects the shared stem-class embedding. The API does not merge or deduplicate notes.
+`midi` accepts a Path or MIDI bytes, and `audio` accepts a SoundFile-readable Path or `DecodedAudio`. `stem_kind` is one of `bass`, `drums`, `guitar`, `other`, `piano`, `vocals`, or `unknown`. Every note in the MIDI must belong to the same logical stem as the supplied audio; do not combine different stem kinds into one call. All tracks retain their own program and drum flag, while `stem_kind` only selects the shared stem-class embedding. The API does not merge or deduplicate notes.
 
 `loudness_controls="velocity_only"` (the default) replaces all CC7/11 with 127 on note-bearing channels. `"preserve"` leaves them unchanged, and `"strip"` removes them without adding replacements. Other MIDI events, tracks, absolute ticks, and Note Off representations are preserved. A zero-note MIDI bypasses audio/model inference and returns the original bytes with `velocity_applied=False`.
+
+Velocity windows use non-overlapping Note On ownership. When the audio ends with a partial window, the final notes keep their original ownership interval while the model receives one full window aligned to the end of the audio, preserving preceding acoustic context without predicting earlier notes twice. Audio shorter than one window is right-zero-padded and masked. A `window_seconds` value below the loaded model's CQT minimum raises a descriptive `ValueError`; the minimum is derived from that model's CQT stages rather than hard-coded.
+
+`from_checkpoint()` loads one explicitly supplied, trusted local checkpoint and never downloads it. The loaded model and optional regional compilation are reused across calls. `result.midi_bytes` is the authoritative output, `result.note_count` is the number of notes processed, and `velocity_applied=False` identifies the zero-note bypass. There is no dedicated warmup method: call `estimate()` with representative audio and a note-bearing MIDI if a cold-start run is needed. A zero-note MIDI does not execute the model and therefore does not warm it up.
 
 As with `Transcriber`, one `VelocityEstimator` accepts one call at a time. Queueing, process lanes, representative cold-start calls, MIDI persistence, and merge policy belong to the application.
 
